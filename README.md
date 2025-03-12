@@ -1,10 +1,10 @@
 # TCP Tunnel
 
-[![Release Build](https://github.com/digitalrusher/tcp-tunnel/actions/workflows/release.yml/badge.svg)](https://github.com/digitalrusher/tcp-tunnel/actions/workflows/release.yml)
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/digitalrusher/tcp-tunnel)](https://github.com/digitalrusher/tcp-tunnel/releases)
-[![GitHub stars](https://img.shields.io/github/stars/digitalrusher/tcp-tunnel)](https://github.com/digitalrusher/tcp-tunnel/stargazers)
-[![GitHub license](https://img.shields.io/github/license/digitalrusher/tcp-tunnel)](https://github.com/digitalrusher/tcp-tunnel/blob/main/LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/digitalrusher/tcp-tunnel)](https://goreportcard.com/report/github.com/digitalrusher/tcp-tunnel)
+[![Release Build](https://github.com/seanchan/tcp-tunnel/actions/workflows/release.yml/badge.svg)](https://github.com/seanchan/tcp-tunnel/actions/workflows/release.yml)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/seanchan/tcp-tunnel)](https://github.com/seanchan/tcp-tunnel/releases)
+[![GitHub stars](https://img.shields.io/github/stars/seanchan/tcp-tunnel)](https://github.com/seanchan/tcp-tunnel/stargazers)
+[![GitHub license](https://img.shields.io/github/license/seanchan/tcp-tunnel)](https://github.com/seanchan/tcp-tunnel/blob/main/LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/seanchan/tcp-tunnel)](https://goreportcard.com/report/github.com/seanchan/tcp-tunnel)
 
 A lightweight TCP tunneling tool written in Go, allowing you to expose local services to the internet securely.
 
@@ -20,12 +20,12 @@ A lightweight TCP tunneling tool written in Go, allowing you to expose local ser
 
 ### From Release
 
-Download the latest release from our [releases page](https://github.com/digitalrusher/tcp-tunnel/releases).
+Download the latest release from our [releases page](https://github.com/seanchan/tcp-tunnel/releases).
 
 ### From Source 
 
 ```bash
-git clone https://github.com/digitalrusher/tcp-tunnel.git
+git clone https://github.com/seanchan/tcp-tunnel.git
 cd tcp-tunnel
 go build -o tcp-tunnel ./cmd/server/
 ```
@@ -80,4 +80,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=digitalrusher/tcp-tunnel&type=Date)](https://star-history.com/#digitalrusher/tcp-tunnel)
+[![Star History Chart](https://api.star-history.com/svg?repos=seanchan/tcp-tunnel&type=Date)](https://star-history.com/#seanchan/tcp-tunnel)
