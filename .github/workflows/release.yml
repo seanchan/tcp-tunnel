@@ -1,4 +1,4 @@
-name: Release
+name: Release Build
 
 on:
   push:
@@ -6,28 +6,54 @@ on:
       - 'v*'
 
 jobs:
-  release:
+  build:
+    name: Build and Release
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: '1.21'
+          cache: true
+      
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
-      - name: Build
+      - name: Build for all platforms
         run: |
-          GOOS=linux GOARCH=amd64 go build -o tcp-tunnel-linux-amd64
-          GOOS=windows GOARCH=amd64 go build -o tcp-tunnel-windows-amd64.exe
-          GOOS=darwin GOARCH=amd64 go build -o tcp-tunnel-darwin-amd64
+          # Build for macOS (both AMD64 and ARM64)
+          GOOS=darwin GOARCH=amd64 go build -o dist/tcp-tunnel-darwin-amd64 ./cmd/server/
+          GOOS=darwin GOARCH=arm64 go build -o dist/tcp-tunnel-darwin-arm64 ./cmd/server/
+          
+          # Build for Linux (AMD64)
+          GOOS=linux GOARCH=amd64 go build -o dist/tcp-tunnel-linux-amd64 ./cmd/server/
+          
+          # Build for Windows (AMD64)
+          GOOS=windows GOARCH=amd64 go build -o dist/tcp-tunnel-windows-amd64.exe ./cmd/server/
+          
+          # Create ZIP archives
+          cd dist
+          zip tcp-tunnel-darwin-amd64.zip tcp-tunnel-darwin-amd64
+          zip tcp-tunnel-darwin-arm64.zip tcp-tunnel-darwin-arm64
+          zip tcp-tunnel-linux-amd64.zip tcp-tunnel-linux-amd64
+          zip tcp-tunnel-windows-amd64.zip tcp-tunnel-windows-amd64.exe
 
       - name: Create Release
+        id: create_release
         uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            tcp-tunnel-linux-amd64
-            tcp-tunnel-windows-amd64.exe
-            tcp-tunnel-darwin-amd64
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          name: Release ${{ env.VERSION }}
+          draft: false
+          prerelease: false
+          files: |
+            dist/tcp-tunnel-darwin-amd64.zip
+            dist/tcp-tunnel-darwin-arm64.zip
+            dist/tcp-tunnel-linux-amd64.zip
+            dist/tcp-tunnel-windows-amd64.zip 

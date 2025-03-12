@@ -1,11 +1,16 @@
 package tunnel
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"net"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 type Server struct {
@@ -15,104 +20,129 @@ type Server struct {
 	nextPort    int
 	tunnels     map[int]*Tunnel
 	mu          sync.Mutex
+	logger      *zap.Logger
 }
 
 type Tunnel struct {
 	clientConn net.Conn
 	publicPort int
 	targetPort int
+	listener   net.Listener
+	active     bool
+	mu         sync.Mutex
 }
 
-func NewServer(controlPort, minPort, maxPort int) *Server {
+func NewServer(controlPort, minPort, maxPort int) (*Server, error) {
+	logger, _ := zap.NewProduction()
+	defer logger.Sync()
+
 	return &Server{
 		controlPort: controlPort,
 		minPort:     minPort,
 		maxPort:     maxPort,
 		nextPort:    minPort,
 		tunnels:     make(map[int]*Tunnel),
-	}
+		logger:      logger,
+	}, nil
 }
 
-func (s *Server) Start() {
-	// 监听控制端口，等待客户端连接
+func (s *Server) Start() error {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", s.controlPort))
 	if err != nil {
-		fmt.Printf("Failed to start server: %v\n", err)
-		return
+		return err
 	}
-	fmt.Printf("Server listening on control port %d\n", s.controlPort)
+
+	s.logger.Info("server started", zap.Int("port", s.controlPort))
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Printf("Failed to accept connection: %v\n", err)
 			continue
 		}
 		go s.handleClient(conn)
 	}
 }
 
-func (s *Server) handleClient(clientConn net.Conn) {
-	// 分配一个可用端口
-	assignedPort := s.allocatePort()
-	if assignedPort == -1 {
-		fmt.Println("No available ports")
-		clientConn.Close()
+func (s *Server) handleClient(conn net.Conn) {
+	s.logger.Info("new connection established",
+		zap.String("remote_addr", conn.RemoteAddr().String()))
+
+	reader := bufio.NewReader(conn)
+	firstLine, err := reader.ReadString('\n')
+	if err != nil {
+		conn.Close()
 		return
 	}
 
-	// 创建新的隧道
-	tunnel := &Tunnel{
-		clientConn: clientConn,
-		publicPort: assignedPort,
+	command := strings.TrimSpace(firstLine)
+	var tunnel *Tunnel
+
+	if strings.HasPrefix(command, "NEW") {
+		var requestedPort int
+		parts := strings.Fields(command)
+		if len(parts) > 1 {
+			requestedPort, _ = strconv.Atoi(parts[1])
+		}
+
+		port := s.allocatePort(requestedPort)
+		if port == -1 {
+			fmt.Fprintf(conn, "ERROR no ports available\n")
+			conn.Close()
+			return
+		}
+
+		s.mu.Lock()
+		if existingTunnel, exists := s.tunnels[port]; exists {
+			existingTunnel.clientConn = conn
+			existingTunnel.active = true
+			tunnel = existingTunnel
+		} else {
+			tunnel = &Tunnel{
+				publicPort: port,
+				clientConn: conn,
+				active:     true,
+			}
+			s.tunnels[port] = tunnel
+			go s.startTunnelListener(tunnel)
+		}
+		s.mu.Unlock()
+
+		fmt.Fprintf(conn, "%d\n", port)
+		s.logger.Info("assigned port to client",
+			zap.Int("port", port),
+			zap.String("client", conn.RemoteAddr().String()))
 	}
 
-	s.mu.Lock()
-	s.tunnels[assignedPort] = tunnel
-	s.mu.Unlock()
+	// Start heartbeat
+	heartbeatFailed := make(chan struct{})
+	go s.handleHeartbeat(conn, reader, heartbeatFailed)
 
-	// 启动公共端口监听
-	go s.startTunnelListener(tunnel)
-
-	// 通知客户端分配的端口
-	fmt.Fprintf(clientConn, "%d\n", assignedPort)
-	fmt.Printf("New tunnel established: %d\n", assignedPort)
-}
-
-func (s *Server) allocatePort() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	startPort := s.nextPort
-	for {
-		if s.nextPort > s.maxPort {
-			s.nextPort = s.minPort
-		}
-		port := s.nextPort
-		s.nextPort++
-
-		if _, inUse := s.tunnels[port]; !inUse {
-			return port
-		}
-		if s.nextPort == startPort {
-			return -1 // 所有端口都在使用中
-		}
+	<-heartbeatFailed
+	if tunnel != nil {
+		tunnel.active = false
+		tunnel.clientConn = nil
 	}
+	conn.Close()
 }
 
 func (s *Server) startTunnelListener(tunnel *Tunnel) {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", tunnel.publicPort))
 	if err != nil {
-		fmt.Printf("Failed to start tunnel listener on port %d: %v\n", tunnel.publicPort, err)
+		s.logger.Error("failed to start tunnel listener",
+			zap.Int("port", tunnel.publicPort),
+			zap.Error(err))
 		return
 	}
-	defer listener.Close()
+	tunnel.listener = listener
+	s.logger.Info("started tunnel listener", zap.Int("public_port", tunnel.publicPort))
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Printf("Failed to accept connection on tunnel %d: %v\n", tunnel.publicPort, err)
-			continue
+			if ne, ok := err.(net.Error); ok && ne.Temporary() {
+				continue
+			}
+			return
 		}
 		go s.handleTunnelConnection(conn, tunnel)
 	}
@@ -120,46 +150,125 @@ func (s *Server) startTunnelListener(tunnel *Tunnel) {
 
 func (s *Server) handleTunnelConnection(conn net.Conn, tunnel *Tunnel) {
 	defer conn.Close()
+	s.logger.Info("new connection on tunnel",
+		zap.String("remote_addr", conn.RemoteAddr().String()),
+		zap.Int("public_port", tunnel.publicPort))
 
-	// 通知客户端新连接
-	fmt.Fprintf(tunnel.clientConn, "CONNECT\n")
+	tunnel.mu.Lock()
+	if !tunnel.active || tunnel.clientConn == nil {
+		tunnel.mu.Unlock()
+		s.logger.Info("tunnel not active, rejecting connection")
+		return
+	}
+	clientConn := tunnel.clientConn
+	tunnel.mu.Unlock()
 
-	// 等待客户端创建数据通道
-	dataConn, err := s.waitForDataChannel(tunnel)
+	// 设置连接超时
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	// Notify client of new connection
+	_, err := fmt.Fprintf(clientConn, "CONNECT\n")
 	if err != nil {
-		fmt.Printf("Failed to establish data channel: %v\n", err)
+		s.logger.Error("failed to send CONNECT command", zap.Error(err))
+		return
+	}
+
+	// Create temporary listener for data channel
+	dataListener, err := net.Listen("tcp", ":0")
+	if err != nil {
+		s.logger.Error("failed to create data listener", zap.Error(err))
+		return
+	}
+	defer dataListener.Close()
+
+	dataPort := dataListener.Addr().(*net.TCPAddr).Port
+	s.logger.Info("created data channel",
+		zap.Int("data_port", dataPort))
+
+	_, err = fmt.Fprintf(clientConn, "PORT %d\n", dataPort)
+	if err != nil {
+		s.logger.Error("failed to send PORT command", zap.Error(err))
+		return
+	}
+
+	// Accept data connection from client with timeout
+	dataListener.(*net.TCPListener).SetDeadline(time.Now().Add(5 * time.Second))
+	dataConn, err := dataListener.Accept()
+	if err != nil {
+		s.logger.Error("failed to accept data connection", zap.Error(err))
 		return
 	}
 	defer dataConn.Close()
 
-	// 双向转发数据
+	// 连接建立后清除超时设置
+	conn.SetDeadline(time.Time{})
+	dataConn.SetDeadline(time.Time{})
+
+	s.logger.Info("data connection established")
+
+	// Start bidirectional copy
+	done := make(chan struct{})
+	closeOnce := sync.Once{}
+
 	go func() {
-		io.Copy(dataConn, conn)
+		n, err := io.Copy(conn, dataConn)
+		if err != nil && !isConnectionClosed(err) {
+			s.logger.Error("error copying data to client", zap.Error(err))
+		}
+		s.logger.Info("forward direction completed", zap.Int64("bytes", n))
+		closeOnce.Do(func() { close(done) })
 	}()
-	io.Copy(conn, dataConn)
+
+	go func() {
+		n, err := io.Copy(dataConn, conn)
+		if err != nil && !isConnectionClosed(err) {
+			s.logger.Error("error copying data from client", zap.Error(err))
+		}
+		s.logger.Info("reverse direction completed", zap.Int64("bytes", n))
+		closeOnce.Do(func() { close(done) })
+	}()
+
+	<-done
+	s.logger.Info("tunnel connection completed")
 }
 
-func (s *Server) waitForDataChannel(tunnel *Tunnel) (net.Conn, error) {
-	// 使用随机端口而不是控制端口
-	listener, err := net.Listen("tcp", ":0") // 使用 :0 让系统分配随机可用端口
-	if err != nil {
-		return nil, err
-	}
-	defer listener.Close()
+func (s *Server) allocatePort(requestedPort int) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	// 获取实际分配的端口
-	addr := listener.Addr().(*net.TCPAddr)
-
-	// 将随机分配的端口号发送给客户端
-	fmt.Fprintf(tunnel.clientConn, "PORT %d\n", addr.Port)
-
-	// 设置接受连接超时
-	listener.(*net.TCPListener).SetDeadline(time.Now().Add(10 * time.Second))
-
-	conn, err := listener.Accept()
-	if err != nil {
-		return nil, err
+	// 如果请求了特定端口且该端口可用
+	if requestedPort >= s.minPort && requestedPort <= s.maxPort {
+		if tunnel, exists := s.tunnels[requestedPort]; !exists || !tunnel.active {
+			return requestedPort
+		}
 	}
 
-	return conn, nil
+	// 否则分配新端口
+	for port := s.nextPort; port <= s.maxPort; port++ {
+		if _, exists := s.tunnels[port]; !exists {
+			s.nextPort = port + 1
+			return port
+		}
+	}
+	return -1
+}
+
+func (s *Server) handleHeartbeat(conn net.Conn, reader *bufio.Reader, failed chan struct{}) {
+	defer close(failed)
+
+	for {
+		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return
+		}
+
+		command := strings.TrimSpace(line)
+		if command == "PING" {
+			_, err := fmt.Fprintf(conn, "PONG\n")
+			if err != nil {
+				return
+			}
+		}
+	}
 }
