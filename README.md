@@ -6,6 +6,10 @@
 [![GitHub license](https://img.shields.io/github/license/seanchan/tcp-tunnel)](https://github.com/seanchan/tcp-tunnel/blob/main/LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/seanchan/tcp-tunnel)](https://goreportcard.com/report/github.com/seanchan/tcp-tunnel)
 
+
+[English] | <span style="font-weight: bold; color: blue;">[中文](./README_CN.md)</span>  <!-- 切换链接 -->
+
+
 A lightweight TCP tunneling tool written in Go, allowing you to expose local services to the internet securely.
 
 ## Features
@@ -34,24 +38,25 @@ go build -o tcp-tunnel ./cmd/server/
 
 ### Server
 
-```bash
-./tcp-tunnel-server --port 8088 --min-port 10000 --max-port 20000
-```
+1. Download and extract the server file.
+2. Run the following command to start the server:
 
-Options:
-- `--port`: Server control port (default: 8088)
-- `--min-port`: Minimum port for public endpoints (default: 10000)
-- `--max-port`: Maximum port for public endpoints (default: 20000)
+   ```bash
+   ./tcp-tunnel-server
+   ```
+
+3. After the server starts, note down the displayed address and port.
 
 ### Client
 
-```bash
-./tcp-tunnel-client --server localhost:8088 --local localhost:80
-```
+1. Download and extract the client file.
+2. Run the following command to connect to the server:
 
-Options:
-- `--server`: Server address (default: localhost:8088)
-- `--local`: Local service address to tunnel (default: localhost:80)
+   ```bash
+   ./tcp-tunnel-client -s <server address> -p <server port>
+   ```
+
+3. Once the client connects successfully, you can start using the TCP tunnel.
 
 ## Example
 
