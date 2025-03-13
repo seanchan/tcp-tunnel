@@ -77,5 +77,5 @@ jobs:
             dist/tcp-tunnel-server-windows-amd64.zip
             dist/tcp-tunnel-client-darwin-amd64.zip
             dist/tcp-tunnel-client-darwin-arm64.zip
-            client/dist/tcp-tunnel-client-linux-amd64.zip
-            client/dist/tcp-tunnel-client-windows-amd64.zip 
+            dist/tcp-tunnel-client-linux-amd64.zip
+            dist/tcp-tunnel-client-windows-amd64.zip 
